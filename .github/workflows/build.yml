@@ -34,8 +34,23 @@ jobs:
             libbluetooth-dev libasound2-dev libpulse-dev libgl1-mesa-dev \
             libxrandr-dev libxi-dev
 
-      - name: Build tools
-        run: make tools JOBS=$(nproc)
+      - name: Configure ModernGekko
+        run: >
+          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers"
+          -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers"
+          -DMODERNGEKKO_APP_ID="io.github.beachspikers.BeachSpikers"
+          -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
+
+      - name: Build ModernGekko
+        run: cmake --build lib/ModernGekko/build --parallel $(nproc)
+
+      - name: Configure DolRecomp
+        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build DolRecomp
+        run: cmake --build lib/DolRecomp/build --parallel $(nproc)
 
       - name: Check compiler
         run: sh scripts/check-build.sh --no-fetch
@@ -111,8 +126,23 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive --force
 
-      - name: Build tools
-        run: make tools JOBS=$(sysctl -n hw.ncpu)
+      - name: Configure ModernGekko
+        run: >
+          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers"
+          -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers"
+          -DMODERNGEKKO_APP_ID="io.github.beachspikers.BeachSpikers"
+          -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
+
+      - name: Build ModernGekko
+        run: cmake --build lib/ModernGekko/build --parallel $(sysctl -n hw.ncpu)
+
+      - name: Configure DolRecomp
+        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build DolRecomp
+        run: cmake --build lib/DolRecomp/build --parallel $(sysctl -n hw.ncpu)
 
       - name: Package
         run: |
