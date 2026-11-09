@@ -100,26 +100,27 @@ jobs:
         run: cmake --build lib/DolRecomp/build --config Release --parallel
 
       - name: Package
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p dist
-          echo "=== build dir contents ==="
-          ls -la lib/ModernGekko/build/*.exe 2>&1 || true
-          cd lib/ModernGekko/build
-          # Zip whatever executables the build actually produced.
-          files=()
-          for f in "Beach Spikers.exe" moderngekko-run.exe "Beach Spikers" moderngekko-run; do
-            [[ -f "$f" ]] && files+=("$f")
-          done
-          if [[ ${#files[@]} -gt 0 ]]; then
-            zip -r ../../../dist/BeachSpikers-Windows.zip "${files[@]}"
-          else
-            echo "No executables found to package" >&2
-            find . -maxdepth 1 -name '*.exe' -o -name 'moderngekko*' 2>/dev/null
-          fi
-          cd ../../..
-          echo "=== dist ==="
-          ls -la dist/ || true
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $build = "lib/ModernGekko/build"
+          Write-Host "=== build dir exe files ==="
+          Get-ChildItem -Path $build -Filter *.exe | Select-Object Name
+          $files = @()
+          foreach ($name in @("Beach Spikers.exe", "moderngekko-run.exe")) {
+            $p = Join-Path $build $name
+            if (Test-Path $p) { $files += $p }
+          }
+          if ($files.Count -gt 0) {
+            Compress-Archive -Path $files -DestinationPath "dist/BeachSpikers-Windows.zip" -Force
+            Write-Host "Created zip with $($files.Count) files"
+          } else {
+            Write-Error "No executables found to package"
+            Get-ChildItem -Path $build | Select-Object Name
+            exit 1
+          }
+          Write-Host "=== dist ==="
+          Get-ChildItem -Path dist
 
       - name: Upload
         uses: actions/upload-artifact@v4
