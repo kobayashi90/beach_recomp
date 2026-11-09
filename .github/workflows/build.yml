@@ -1,11 +1,5 @@
 name: Build
 
-# Builds the toolchain and packages it. The per-game module (g<disc>_recomp.so)
-# needs an extracted disc image and is therefore NOT built here; the resulting
-# package is a toolchain-only build whose launcher asks for a disc image on
-# first run. To ship a build that already contains a module, run locally with
-# your own dump: `make recompile GAME=beach && make appimage`.
-
 on:
   push:
     branches: [main, master]
@@ -19,7 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------- Linux
   linux:
     name: Linux (AppImage)
     runs-on: ubuntu-latest
@@ -41,25 +34,16 @@ jobs:
             libbluetooth-dev libasound2-dev libpulse-dev libgl1-mesa-dev \
             libxrandr-dev libxi-dev
 
-      - name: Configure ModernGekko
-        run: cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build ModernGekko
-        run: cmake --build lib/ModernGekko/build --parallel
-
-      - name: Configure DolRecomp
-        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build DolRecomp
-        run: cmake --build lib/DolRecomp/build --parallel
+      - name: Build tools
+        run: make tools JOBS=$(nproc)
 
       - name: Check compiler
         run: sh scripts/check-build.sh --no-fetch
 
       - name: Build AppImage
         env:
-          VERSION: ${{ github.ref_name }}
-        run: VERSION=${VERSION#v} VERSION=${VERSION:-1.0.0} bash packaging/build-appimage.sh
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '1.0.0' }}
+        run: VERSION=${VERSION#v} bash packaging/build-appimage.sh
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
@@ -68,7 +52,6 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: warn
 
-  # ---------------------------------------------------------------- Windows
   windows:
     name: Windows (zip)
     runs-on: windows-latest
@@ -82,7 +65,13 @@ jobs:
         run: git submodule update --init --recursive --force
 
       - name: Configure ModernGekko
-        run: cmake -S lib/ModernGekko -B lib/ModernGekko/build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers"
+          -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers"
+          -DMODERNGEKKO_APP_ID="io.github.beachspikers.BeachSpikers"
+          -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
 
       - name: Build ModernGekko
         run: cmake --build lib/ModernGekko/build --config Release --parallel
@@ -97,7 +86,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          zip -r dist/BeachSpikers-Windows.zip lib/ModernGekko/build/*.exe lib/ModernGekko/build/ModernGekko*.dll 2>/dev/null || true
+          cd lib/ModernGekko/build
+          zip -r ../../../dist/BeachSpikers-Windows.zip "Beach Spikers.exe" moderngekko-run.exe 2>/dev/null || true
+          cd ../../..
           ls -la dist/ || true
 
       - name: Upload
@@ -107,7 +98,6 @@ jobs:
           path: dist/*
           if-no-files-found: warn
 
-  # ---------------------------------------------------------------- macOS
   macos:
     name: macOS (app)
     runs-on: macos-latest
@@ -120,22 +110,13 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive --force
 
-      - name: Configure ModernGekko
-        run: cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build ModernGekko
-        run: cmake --build lib/ModernGekko/build --parallel
-
-      - name: Configure DolRecomp
-        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build DolRecomp
-        run: cmake --build lib/DolRecomp/build --parallel
+      - name: Build tools
+        run: make tools JOBS=$(sysctl -n hw.ncpu)
 
       - name: Package
         run: |
           mkdir -p dist
-          tar czf dist/BeachSpikers-macOS.tar.gz lib/ModernGekko/build/moderngekko-run 2>/dev/null || true
+          tar czf dist/BeachSpikers-macOS.tar.gz -C lib/ModernGekko/build "Beach Spikers" moderngekko-run 2>/dev/null || true
           ls -la dist/ || true
 
       - name: Upload
