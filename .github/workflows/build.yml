@@ -64,6 +64,8 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive --force
 
+      - uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure ModernGekko
         run: >
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G "Visual Studio 17 2022" -A x64
