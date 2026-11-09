@@ -1,15 +1,30 @@
-# ModernGekko-Template
+# Beach Spikers — ModernGekko static recompilation
 
-A template for building a static-recompilation pipeline for GameCube and Wii games, built on:
+A static recompilation of **Beach Spikers: Virtua Beach Volleyball** (GameCube) for
+Linux, built on:
 
-- [DolRecomp](https://github.com/ExpansionPak/DolRecomp) - static recompiler that turns a GameCube/Wii DOL into portable C or optimized native LLVM objects.
-- [ModernGekko](https://github.com/ExpansionPak/ModernGekko) - the runtime the recompiled C links against (built on a Dolphin-derived core for video/audio/HLE).
+- [DolRecomp](https://github.com/ExpansionPak/DolRecomp) — static recompiler that turns a GameCube/Wii DOL into portable C or optimized native LLVM objects.
+- [ModernGekko](https://github.com/ExpansionPak/ModernGekko) — the runtime the recompiled C links against (built on a Dolphin-derived core for video/audio/HLE).
 
-Both are pulled in as git submodules under `lib/`. Everything is handled through the top-level `Makefile`. This repo has no game-specific code of its own, so it's a starting point for standing up a recompilation project for any GameCube or Wii title you own.
+Both are pulled in as git submodules under `lib/`. Everything is handled through
+the top-level `Makefile`. No game data, disc image, or copyrighted asset is
+included in this repository — bring your own legally-owned dump (see
+[Recompile and Run](#recompile-and-run)).
 
-## Using This Template
+> [!NOTE]
+> This is an **AI-assisted recompilation**: the recompilation pipeline, runtime
+> integration, F1 settings menu, performance work (idle-skip, PGO, LTO) and
+> packaging were developed with substantial assistance from an AI coding agent.
+> The original game code and assets remain the property of their respective
+> owners.
 
-Click **Use this template** on GitHub (or fork/clone it directly) to create your own project repo. Nothing in the `Makefile` or submodule setup needs to change to point it at a different game, just pass a different `ISO=` the first time you run it. Rename the repo to whatever fits your project.
+## Using This Repository
+
+Clone with submodules and build locally (see [Getting the Source](#getting-the-source)).
+Nothing in the `Makefile` or submodule setup needs to change to point it at a
+different GameCube/Wii title — pass a different `ISO=` the first time you run
+it. The project-specific bits (title, app id, icon) live in the `FRONTEND_NAME`,
+`WINDOW_TITLE` and `APP_ID` variables (see [Variables](#variables)).
 
 ## Dependencies
 
@@ -125,6 +140,7 @@ Run `make help` (or just `make`, the default target) for this list:
 | `run`        | Recompile (if needed) and launch the game                   |
 | `llvm`       | Build an optimized LLVM object module                       |
 | `llvm-run`   | Build an LLVM object module and launch the game             |
+| `appimage`   | Package the build as a single-file AppImage                 |
 | `clean`      | Remove all build output                                     |
 
 ## Variables
@@ -140,6 +156,10 @@ Run `make help` (or just `make`, the default target) for this list:
 | `LLVM_DIR`         | *(CMake discovery)*                        | Optional path to LLVM 19/20's CMake package.              |
 | `RUN_ARGS`         | *(empty)*                                  | Extra flags forwarded to `moderngekko-run` via `make run`, e.g. `--headless`, `--graphics Vulkan`. |
 | `TOOLCHAIN`        | `auto`                                      | Compiler for the per-game module: `auto`, `clang`, `gcc`, or `msvc`. See "Toolchain" below. |
+| `FRONTEND_NAME`    | `Beach Spikers`                             | Product name shown on the launcher and used as the launcher's filename. |
+| `WINDOW_TITLE`     | `Beach Spikers`                             | Fixed game window title. Without it the title is the disc's own name. |
+| `APP_ID`           | `io.github.beachspikers.BeachSpikers`       | Reverse-DNS id for Wayland's app_id (taskbar grouping). |
+| `VERSION`          | `1.0.0`                                    | Version stamped into the AppImage file name. |
 
 For example, to force a debug build with extra runner flags:
 
@@ -180,7 +200,184 @@ Module builds are cached by DOL hash *and* toolchain identity, so switching `TOO
 
 ## Controller Input
 
-ModernGekko has no in-app controller configuration UI (same as Dolphin's NoGUI frontend it's built on), bindings come from `Config/GCPadNew.ini` / `Config/WiimoteNew.ini` in ModernGekko's user directory (`~/.local/share/moderngekko/Config/` by default), which nothing in this pipeline creates for you. Without one, GameCube pad input silently does nothing. You'll need to hand-author or copy in a working ini, Dolphin's ini format and key names are stable and documented by the project itself.
+Bindings come from `Config/GCPadNew.ini` / `Config/WiimoteNew.ini` in ModernGekko's user directory (`~/.local/share/moderngekko/Config/` by default). Without one, pad input silently does nothing. You can write one by hand (Dolphin's ini format and key names are stable and documented by the project itself) or let the F1 menu's Input tab pick a device for each port, which generates the ini for you.
+
+## In-game Settings Menu (F1)
+
+F1 opens an overlay menu; ESC closes it. Emulation pauses while it is open, and
+the settings that can be applied without a restart land on the next emulated
+frame.
+
+| Tab        | Settings                                                                 |
+|------------|--------------------------------------------------------------------------|
+| Display    | Internal resolution, graphics backend (restart), fullscreen, vsync, aspect ratio, widescreen hack, FPS counters |
+| Input      | Device per GameCube port, keyboard-as-pad bindings                        |
+| Audio      | Backend (live swap), volume, mute                                         |
+| Textures   | HD texture packs on/off, decoded-texture caching, pack folder scan        |
+| States     | Savestate slot + save/load, console reset, screenshot                     |
+| Cheats     | Master switch, Gecko / Action Replay list for the current disc, rescan    |
+| System     | Game/disc info, GameCube system language (restart), save/restart/quit     |
+
+Everything is persisted to `config.ini` in the user directory and applied at
+boot by `moderngekko-run`, so the menu is a frontend for that file rather than a
+second source of truth. Two settings need a restart on purpose: the graphics
+backend (the window and device are created once) and the system language
+(EXI_DeviceIPL writes it into the emulated SRAM during boot, before any menu can
+open).
+
+Screenshots land in `ScreenShots/<game id>/`, savestates in `StateSaves/`.
+
+### Cheats
+
+The Cheats tab lists the Gecko and Action Replay codes for the disc that is
+running. `Enable cheats` is the master switch (Dolphin's `MAIN_ENABLE_CHEATS`);
+ticking an individual code turns it on inside the emulated game.
+
+Codes are not stored in `config.ini`. They live in Dolphin's own per-game file,
+`GameSettings/<disc ID>.ini` (e.g. `~/.local/share/moderngekko/GameSettings/GBSP8P.ini`),
+and the tab reads exactly the same file the core reads at boot, so there is one
+source of truth instead of two copies that can drift. Ticking a code writes only
+the enabled/disabled list back; codes that ship with the emulator (the 16:9
+widescreen code in `Sys/GameSettings/GBSP8P.ini`) are not duplicated into the
+user file.
+
+A ticked code applies on the next emulated frame and keeps writing its values
+every frame. Unticking it stops the writes, but whatever it already changed
+stays in memory until the game rewrites it — reset if you want a clean slate.
+The tab never touches the code handler directly; it re-installs itself on the
+next frame, which is why toggling is safe while the menu holds the core paused.
+
+If a disc has no codes yet, the tab offers **Create codes file**, which writes a
+commented skeleton you can paste codes into before hitting **Rescan**. Gecko
+codes require `Sys/codehandler.bin` beside the executables — it is part of the
+shipped AppImage, and without it the master switch would list codes that can
+never run.
+
+Two live-apply paths are worth knowing about because they used to look like
+freezes:
+
+* **Audio backend.** Selecting a backend tears down the old sound stream and
+  opens a new one on the thread that draws the menu, because the backend is a
+  constructor argument of the stream. PulseAudio's worker blocks in
+  `pa_mainloop_iterate()` waiting for the server, and with the menu open the
+  emulation is paused so nothing is ever written to the sink — the join waited
+  for an event that might never arrive (measured at 17 s of frozen UI). The
+  stream destructor now wakes that poll, and the swap costs ~40 ms.
+* **Quit.** Dolphin's no-GUI platform implements a stop request as a tap on the
+  emulated power button: the guest is asked to shut down politely and only a
+  second request forces the process down. A paused guest (any guest, with the
+  menu open) can never service the tap, so a stop request arms a 3 s watchdog
+  that repeats it. Without it, Quit from the menu could do nothing at all once
+  the game had installed its own shutdown hook.
+
+#### Region-scoped codes and builds
+
+Codes are scoped to the **disc ID**, not to the title, so each region reads its
+own file and nothing else:
+
+| Disc ID | Region | Codes file |
+| --- | --- | --- |
+| `GBSP8P` | PAL | `Sys/GameSettings/GBSP8P.ini` |
+| `GBSE8P` | NTSC-U | `Sys/GameSettings/GBSE8P.ini` |
+
+`GBS.ini` — the prefix shared by *every* Beach Spikers disc — is loaded for all
+regions. It may carry shared settings such as the game database's
+`FPRF = True`, but it must never contain a code: a code parked there would be
+offered to, and applied at the addresses of, the other region too. The harness
+asserts both halves of this. The NTSC-U disc lists its own 9 codes (8 plain-hex
+Action Replay plus the 16:9 Gecko code), never opens `GBSP8P.ini`, and shows no
+PAL-only code names; and with the PAL file removed the tab lists nothing at all.
+
+Building a second region is just a second extraction, because the module is
+keyed on the DOL hash rather than on a hardcoded title:
+
+```
+make recompile ISO=/path/to/your-us-dump.iso   # -> extracted/<slug>/, gGBSE8P_recomp.so
+```
+
+Both INIs must ship in the AppImage. Packaging used to whitelist only
+`GBS.ini` and `GBSP8P.ini`, which produced an image where the NTSC-U disc
+showed an empty Cheats tab.
+
+## First Run
+
+With no game configured, `moderngekko-run` starts the launcher instead of
+failing, and the launcher asks for an ISO, RVZ or WBFS image. The image is
+extracted once into the user directory (`games/<disc ID>/`); after that the game
+starts straight from the launcher and the disc image is no longer needed. The
+choice is remembered in `default-game.txt` in the user directory.
+
+If that file goes missing (deleted, or the first launch was through
+`moderngekko-run --game ...` from a shell, which does not write it), the launcher
+finds the existing extraction under `games/` and offers it again instead of asking
+for the disc image a second time.
+
+## Prebuilt builds
+
+GitHub Actions builds a toolchain-only package on every push and on releases
+(see [`.github/workflows/build.yml`](.github/workflows/build.yml)):
+
+| Platform | Artifact |
+|----------|----------|
+| Linux    | AppImage (single file, no install step) |
+| Windows  | zip of built binaries |
+| macOS    | tarball of built binary |
+
+These builds contain **no game module and no disc image** — on first run the
+launcher asks for your own legally-owned ISO/RVZ/WBFS and recompiles it locally.
+To ship a build that already contains a region module, build locally with
+`make recompile GAME=beach && make appimage`.
+
+## Packaging (AppImage)
+
+
+`make appimage VERSION=1.0.0` produces `dist/BeachSpikers-1.0.0-x86_64.AppImage`:
+one file a player can download, make executable and run, with no install step
+and no distribution-specific build.
+
+What the image contains, and why only that:
+
+| Path                          | Contents                                                        |
+|-------------------------------|-----------------------------------------------------------------|
+| `usr/bin/Beach Spikers`       | the launcher                                                      |
+| `usr/bin/beach-spikers`       | symlink, because `Exec=` in a desktop entry cannot contain a space |
+| `usr/bin/moderngekko-run`     | the runner (found by the launcher as a sibling)                   |
+| `usr/bin/gGBSP8P_recomp.so`   | the PAL recompiled game (also found as a sibling)                 |
+| `usr/bin/gGBSE8P_recomp.so`   | the NTSC-U module, when it has been built                        |
+| `usr/bin/gGBSJ8P_recomp.so`   | the NTSC-J module, when it has been built                        |
+| `usr/bin/Sys/`                | the DSP ROMs, post-processing shaders and the game's own INI      |
+| `usr/lib/`                    | 67 shared libraries; the other 12 are left to the host (glibc, X11, Wayland, ALSA, libusb, zlib) |
+
+`Sys/` is resolved relative to the executable, not the working directory, so it
+has to sit beside the binaries. The extracted game is deliberately *not* in the
+image: it is not ours to redistribute, and the first-run card exists to take the
+player's own disc image.
+
+Every region with a built module ships, and that is deliberate: the launcher
+resolves a region by looking for `g<disc id>_recomp.so` **beside its own
+executable** first, so all three modules in `usr/bin` is exactly what makes the
+in-app region switcher offer PAL, NTSC-U and NTSC-J from one download. Set
+`REGIONS="GBSP8P"` (or any subset) to build a smaller single-region image; a
+region whose module is absent is simply left out of the switcher instead of
+failing at boot.
+
+Two details that are easy to get wrong when building one of these:
+
+* `libstdc++.so.6` and `libgcc_s.so.1` are bundled even though the AppImage
+  project's excludelist says to skip them. This is a C++ binary built on a
+  rolling release; the host's copy can be too old for the symbols it was linked
+  against, which fails as `GLIBCXX_3.4.34 not found` on any distribution a year
+  behind. Everything else follows the excludelist, so the graphics driver and
+  audio stack stay the ones the player's machine is configured for.
+* directories are created with `umask 022`. A restrictive umask in the build
+  shell otherwise produces root-owned `0700` directories, which makes the image
+  unreadable for every user except the one who built it.
+
+`tools/appimage-check.sh` verifies the built file rather than the build tree:
+the type-2 header, the assembled contents, the symlink, `desktop-file-validate`,
+that every library resolves and that libstdc++ is bundled, that libGL/ALSA/Vulkan
+are *not*, and then runs the image offscreen (setup card, OCR'd) and boots the
+game headless out of the mounted image.
 
 ## Cleaning Up
 

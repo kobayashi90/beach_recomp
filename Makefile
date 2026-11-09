@@ -20,6 +20,18 @@ JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 CMAKE_BUILD_TYPE ?= Release
 BUILD_TESTING ?= OFF
 
+# This tree is a single-game build, so the frontend introduces itself as the
+# game and not as the emulator: window titles, the launcher heading and its
+# error dialogs all read "Beach Spikers". The disc's own boot.bin carries
+# "BEACH SPIKERS" in caps, which is why the title is set explicitly instead of
+# being taken from the disc.
+FRONTEND_NAME ?= Beach Spikers
+WINDOW_TITLE ?= Beach Spikers
+APP_ID ?= io.github.beachspikers.BeachSpikers
+
+# Stamped into the launcher's window title and into the AppImage file name.
+VERSION ?= 1.0.0
+
 # Generated-code backend: portable C or native LLVM objects.
 BACKEND ?= c
 LLVM_DIR ?=
@@ -43,7 +55,7 @@ WIT_STAMP := .git/.recomp-wit-stamp
 .DEFAULT_GOAL := help
 
 .PHONY: help all check tools dolrecomp moderngekko submodules wit extract recompile run \
-        llvm llvm-run clean clean-extracted clean-tools
+        llvm llvm-run appimage clean clean-extracted clean-tools clean-appimage
 
 help:
 	@echo "GCWIIRecomp-template"
@@ -59,6 +71,7 @@ help:
 	@echo "  make run ISO=path/to.iso         Recompile (if needed) and launch the game"
 	@echo "  make llvm ISO=path/to.iso        Build an optimized LLVM object module"
 	@echo "  make llvm-run ISO=path/to.iso    Build LLVM objects and launch the game"
+	@echo "  make appimage VERSION=1.0.0      Package the build as a single-file AppImage"
 	@echo "  make clean                       Remove all build output"
 	@echo ""
 	@echo "  make run ISO=iso/Your\\ Game.iso   # first time for a new game"
@@ -109,6 +122,10 @@ dolrecomp: submodules
 moderngekko: submodules
 	cmake -S $(MODERNGEKKO_DIR) -B $(MODERNGEKKO_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) \
 		-DBUILD_TESTING=$(BUILD_TESTING) \
+		-DMODERNGEKKO_FRONTEND_NAME="$(FRONTEND_NAME)" \
+		-DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="$(FRONTEND_NAME)" \
+		-DMODERNGEKKO_APP_ID="$(APP_ID)" \
+		-DMODERNGEKKO_DEFAULT_WINDOW_TITLE="$(WINDOW_TITLE)" \
 		-DDOLRECOMP_ENABLE_LLVM=$(DOLRECOMP_ENABLE_LLVM) $(LLVM_CMAKE_ARG)
 	cmake --build $(MODERNGEKKO_BUILD) --target moderngekko-port -j$(JOBS)
 
@@ -172,7 +189,20 @@ llvm: recompile
 llvm-run: BACKEND=llvm
 llvm-run: run
 
+# One file, no install step: a player downloads it, makes it executable and
+# runs it. This needs the launcher and runner built as well -- `tools` only
+# produces moderngekko-port -- and the per-game module, which comes from
+# `make recompile`; without a module there is nothing to run, so this target
+# reports that instead of shipping an image that cannot start.
+#   make appimage GAME=beach VERSION=1.0.0
+appimage: tools
+	cmake --build $(MODERNGEKKO_BUILD) --target moderngekko-run moderngekko-launcher -j$(JOBS)
+	VERSION=$(VERSION) packaging/build-appimage.sh
+
 # --- cleanup -------------------------------------------------------------------
+
+clean-appimage:
+	rm -rf build/appimage build/tools dist
 
 clean-extracted:
 	rm -rf $(EXTRACTED_ROOT) generated $(MODULES_DIR)
@@ -180,4 +210,4 @@ clean-extracted:
 clean-tools:
 	rm -rf $(DOLRECOMP_BUILD) $(MODERNGEKKO_BUILD)
 
-clean: clean-extracted clean-tools
+clean: clean-extracted clean-tools clean-appimage

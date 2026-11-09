@@ -1,0 +1,44 @@
+#!/bin/sh
+# AppRun -- entry point of the Beach Spikers AppImage.
+#
+# The AppImage runtime calls this with the user's arguments after mounting the
+# image; everything it does here could not be baked into the binary, because
+# the mount point is different on every run:
+#
+#   * the bundled libraries have to be found before the host's (the build links
+#     ~70 of them, and the AppImage ships the ones a fresh distribution will not
+#     have at the right version),
+#   * the mount point is read-only, so nothing may write next to the executable
+#     -- the game already keeps its state in ~/.local/share/moderngekko.
+#
+# All arguments are forwarded untouched: the launcher understands -X11,
+# --wayland, --extract <iso>, and a bare path to a disc image.
+set -eu
+
+if [ -n "${APPDIR:-}" ]; then
+  appdir=$APPDIR
+else
+  # Started from an extracted tree rather than through the runtime.
+  appdir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+fi
+
+# Bundled libraries first, then whatever the user already had. ADR 0003 of the
+# AppImage spec asks for the host's libraries not to shadow the bundled ones:
+# mixing a bundled libfmt with the host's differently-versioned copy of the same
+# soname is the usual cause of "undefined symbol" on startup.
+libdir=$appdir/usr/lib
+if [ -d "$libdir" ]; then
+  LD_LIBRARY_PATH=$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH
+fi
+
+# Some desktops export a stripped PATH, and the launcher looks for its runner as
+# a sibling of itself, so only the absolute path matters -- but a relative one
+# would break if the runtime changed directory under us.
+launcher=$appdir/usr/bin/beach-spikers
+if [ ! -x "$launcher" ]; then
+  echo "AppRun: $launcher is missing or not executable" >&2
+  exit 1
+fi
+
+exec "$launcher" "$@"

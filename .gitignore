@@ -12,3 +12,27 @@ CMakeUserPresets.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Build artifacts / packaging output
+dist/
+logs/
+states/
+notes/
+
+# Performance / profiling state (large binaries and counters)
+tools/pgo-state/
+tools/profsample
+tools/*.so
+
+# Local environment
+.env
+.env.*
+
+# Savestates / game-specific data
+*.state
+*.pyc
+tools/ipc
+tools/perfcount
+tools/profcount
+tools/profsample
+tools/ipc

@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Beach Spikers
+GenericName=Beach Volleyball
+Comment=Virtua Beach Volleyball, recompiled natively for Linux
+Exec=beach-spikers %f
+Icon=beach-spikers
+Terminal=false
+Categories=Game;
+Keywords=volleyball;beach;virtua;gamecube;
+# Matches both windows this build opens: the launcher (SDL) and the game
+# (DolphinNoGUI), which set WM_CLASS from the same application id. Without this
+# the game window is grouped under its executable name and gets no icon.
+StartupWMClass=io.github.beachspikers.BeachSpikers
