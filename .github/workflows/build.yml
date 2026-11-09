@@ -103,9 +103,22 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          echo "=== build dir contents ==="
+          ls -la lib/ModernGekko/build/*.exe 2>&1 || true
           cd lib/ModernGekko/build
-          zip -r ../../../dist/BeachSpikers-Windows.zip "Beach Spikers.exe" moderngekko-run.exe 2>/dev/null || true
+          # Zip whatever executables the build actually produced.
+          files=()
+          for f in "Beach Spikers.exe" moderngekko-run.exe "Beach Spikers" moderngekko-run; do
+            [[ -f "$f" ]] && files+=("$f")
+          done
+          if [[ ${#files[@]} -gt 0 ]]; then
+            zip -r ../../../dist/BeachSpikers-Windows.zip "${files[@]}"
+          else
+            echo "No executables found to package" >&2
+            find . -maxdepth 1 -name '*.exe' -o -name 'moderngekko*' 2>/dev/null
+          fi
           cd ../../..
+          echo "=== dist ==="
           ls -la dist/ || true
 
       - name: Upload
