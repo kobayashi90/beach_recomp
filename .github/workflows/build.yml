@@ -144,6 +144,55 @@ jobs:
               Where-Object { $_.Name -notlike "GBS*" } |
               Remove-Item -Force
           }
+          # --- bundled build toolchain -------------------------------------
+          # A player with no compiler installed must still be able to generate
+          # the recompiled module from their own disc. llvm-mingw is a
+          # self-contained clang + mingw-w64 sysroot (no Visual Studio needed);
+          # cmake and ninja are portable builds. Together they add ~180 MB to
+          # the zip, which buys a one-click install on a clean machine.
+          $tc = Join-Path $pkg "Toolchain"
+          New-Item -ItemType Directory -Force -Path (Join-Path $tc "bin") | Out-Null
+          $tmp = $env:RUNNER_TEMP
+
+          $llvmZip = Join-Path $tmp "llvm-mingw.zip"
+          if (-not (Test-Path $llvmZip)) {
+            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-x86_64.zip" -OutFile $llvmZip
+          }
+          Expand-Archive -Path $llvmZip -DestinationPath (Join-Path $tmp "llvm") -Force
+          $llvmSrc = Get-ChildItem (Join-Path $tmp "llvm") -Directory | Select-Object -First 1
+          Move-Item $llvmSrc.FullName (Join-Path $tc "mingw")
+          $mingw = Join-Path $tc "mingw"
+          # Only the C toolchain is used: drop the C++ headers, the extra LLVM
+          # tools (clangd/lldb/tidy) and the non-x86_64 target wrappers.
+          Remove-Item (Join-Path $mingw "include/c++") -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $mingw "lib/libear"),(Join-Path $mingw "lib/libscanbuild") -Recurse -Force -ErrorAction SilentlyContinue
+          $dropBins = @("clangd*","clang-tidy*","clang-format*","clang-scan-deps*","clang-apply*",
+                        "lldb*","liblldb*","libpython*","libomp*","scan-build*","scan-view*",
+                        "aarch64-*","armv7-*","i686-*","arm64-*")
+          foreach ($pattern in $dropBins) {
+            Get-ChildItem (Join-Path $mingw "bin") -Filter $pattern -ErrorAction SilentlyContinue |
+              Remove-Item -Force
+          }
+
+          $cmakeZip = Join-Path $tmp "cmake.zip"
+          if (-not (Test-Path $cmakeZip)) {
+            Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip" -OutFile $cmakeZip
+          }
+          Expand-Archive -Path $cmakeZip -DestinationPath (Join-Path $tmp "cmake") -Force
+          $cmakeSrc = Get-ChildItem (Join-Path $tmp "cmake") -Directory | Select-Object -First 1
+          Move-Item $cmakeSrc.FullName (Join-Path $tc "cmake")
+
+          $ninjaZip = Join-Path $tmp "ninja.zip"
+          if (-not (Test-Path $ninjaZip)) {
+            Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile $ninjaZip
+          }
+          Expand-Archive -Path $ninjaZip -DestinationPath (Join-Path $tc "bin") -Force
+
+          Write-Host "=== toolchain ==="
+          Get-ChildItem (Join-Path $tc "mingw/bin") -Filter "clang.exe"
+          Get-ChildItem (Join-Path $tc "cmake/bin") -Filter "cmake.exe"
+          Get-ChildItem (Join-Path $tc "bin") -Filter "ninja.exe"
+
           Write-Host "=== package ==="
           Get-ChildItem -Path $pkg -Recurse -File | Measure-Object -Property Length -Sum |
             ForEach-Object { Write-Host "$($_.Count) files, $([math]::Round($_.Sum/1MB,1)) MB" }
