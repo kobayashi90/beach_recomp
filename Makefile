@@ -27,7 +27,7 @@ BUILD_TESTING ?= OFF
 # being taken from the disc.
 FRONTEND_NAME ?= Beach Spikers
 WINDOW_TITLE ?= Beach Spikers
-APP_ID ?= io.github.beachspikers.BeachSpikers
+APP_ID ?= io.github.beachspikers
 
 # Stamped into the launcher's window title and into the AppImage file name.
 VERSION ?= 1.0.0

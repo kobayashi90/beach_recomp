@@ -122,7 +122,7 @@ echo "log: $LOG"
 # launcher's .desktop file (and therefore its icon) instead of grouping every
 # ModernGekko title under one hardcoded id. Exported only when the caller has
 # not already chosen one.
-export MODERNGEKKO_APP_ID=${MODERNGEKKO_APP_ID:-io.github.beachspikers.BeachSpikers}
+export MODERNGEKKO_APP_ID=${MODERNGEKKO_APP_ID:-io.github.beachspikers}
 
 # Deliberately NOT detached: this script owns the display mode for as long as
 # the game runs, so it must stay attached and restore the mode when the game

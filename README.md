@@ -158,7 +158,7 @@ Run `make help` (or just `make`, the default target) for this list:
 | `TOOLCHAIN`        | `auto`                                      | Compiler for the per-game module: `auto`, `clang`, `gcc`, or `msvc`. See "Toolchain" below. |
 | `FRONTEND_NAME`    | `Beach Spikers`                             | Product name shown on the launcher and used as the launcher's filename. |
 | `WINDOW_TITLE`     | `Beach Spikers`                             | Fixed game window title. Without it the title is the disc's own name. |
-| `APP_ID`           | `io.github.beachspikers.BeachSpikers`       | Reverse-DNS id for Wayland's app_id (taskbar grouping). |
+| `APP_ID`           | `io.github.beachspikers`       | Reverse-DNS id for Wayland's app_id (taskbar grouping). |
 | `VERSION`          | `1.0.0`                                    | Version stamped into the AppImage file name. |
 
 For example, to force a debug build with extra runner flags:

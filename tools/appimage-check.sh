@@ -139,7 +139,7 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
 else
   note "desktop-file-validate is not installed"
 fi
-if grep -q '^StartupWMClass=io.github.beachspikers.BeachSpikers$' "$EXTRACT/beach-spikers.desktop"; then
+if grep -q '^StartupWMClass=io.github.beachspikers$' "$EXTRACT/beach-spikers.desktop"; then
   ok "StartupWMClass matches the window's app id"
 else
   bad "StartupWMClass does not match the app id (window will get no icon)"
