@@ -113,7 +113,9 @@ jobs:
           $pkg = "dist/BeachSpikers-Windows"
           New-Item -ItemType Directory -Force -Path $pkg | Out-Null
           $build = "lib/ModernGekko/build"
-          $exes = @("Beach Spikers.exe", "moderngekko-run.exe")
+          # moderngekko-port + dolrecomp let a player generate their own module
+          # from their disc, which is the only redistributable way to ship one.
+          $exes = @("Beach Spikers.exe", "moderngekko-run.exe", "moderngekko-port.exe", "dolrecomp.exe")
           foreach ($name in $exes) {
             $src = Join-Path $build $name
             if (-not (Test-Path $src)) { Write-Error "missing $src"; exit 1 }
@@ -193,6 +195,9 @@ jobs:
           mkdir -p "$pkg"
           cp "lib/ModernGekko/build/Beach Spikers" "$pkg/"
           cp lib/ModernGekko/build/moderngekko-run "$pkg/"
+          for tool in moderngekko-port dolrecomp; do
+            [ -x "lib/ModernGekko/build/$tool" ] && cp "lib/ModernGekko/build/$tool" "$pkg/" || true
+          done
           # Sys/ is resolved relative to the executable, so it has to travel with it.
           for entry in GC Shaders Resources GameSettings; do
             [ -d "lib/ModernGekko/build/Sys/$entry" ] && cp -R "lib/ModernGekko/build/Sys/$entry" "$pkg/Sys/" || true

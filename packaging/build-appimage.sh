@@ -121,6 +121,14 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" \
 
 cp -- "$LAUNCHER" "$APPDIR/usr/bin/Beach Spikers"
 cp -- "$RUNNER" "$APPDIR/usr/bin/moderngekko-run"
+# The module builder. A toolchain-only image has no game module, and the module
+# is generated from the player's own disc, so the tool that does that has to
+# travel with it: the launcher offers to build one on first run.
+for tool in moderngekko-port dolrecomp; do
+  if [[ -x "$BUILD/$tool" ]]; then
+    cp -- "$BUILD/$tool" "$APPDIR/usr/bin/$tool"
+  fi
+done
 # Each module keeps the name the runner looks for: g<disc id>_recomp.so, beside
 # the launcher, so the region switcher can offer the other discs.
 for id in "${!MODULE_FOR[@]}"; do
