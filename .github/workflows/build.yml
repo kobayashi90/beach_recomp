@@ -35,6 +35,13 @@ jobs:
             libbluetooth-dev libasound2-dev libpulse-dev libgl1-mesa-dev \
             libxrandr-dev libxi-dev
 
+      - name: Cache compiled objects
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-${{ hashFiles('.gitmodules', '**/CMakeLists.txt') }}
+          variant: sccache
+          max-size: 2G
+
       - name: Configure ModernGekko
         run: >
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -43,12 +50,13 @@ jobs:
           -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers"
           -DMODERNGEKKO_APP_ID="io.github.beachspikers.BeachSpikers"
           -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build ModernGekko
         run: cmake --build lib/ModernGekko/build --parallel $(nproc)
 
       - name: Configure DolRecomp
-        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       - name: Build DolRecomp
         run: cmake --build lib/DolRecomp/build --parallel $(nproc)
