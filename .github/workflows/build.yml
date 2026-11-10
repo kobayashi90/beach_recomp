@@ -188,6 +188,21 @@ jobs:
           }
           Expand-Archive -Path $ninjaZip -DestinationPath (Join-Path $tc "bin") -Force
 
+          # Sources the module build needs. moderngekko-port resolves these
+          # beside itself (share/dolphin) so the packaged tool is relocatable.
+          $share = Join-Path $pkg "share/dolphin"
+          New-Item -ItemType Directory -Force -Path (Join-Path $share "Data/Sys/GameSettings") | Out-Null
+          foreach ($d in @("module-template", "GXRuntime", "Source/Core/Core/PowerPC/StaticRecomp")) {
+            $src = Join-Path "lib/ModernGekko/vendor/dolphin" $d
+            if (Test-Path $src) {
+              $dst = Join-Path $share $d
+              New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+              Copy-Item $src -Destination $dst -Recurse -Force
+            }
+          }
+          Get-ChildItem "lib/ModernGekko/vendor/dolphin/Data/Sys/GameSettings" -Filter "GBS*.ini" -ErrorAction SilentlyContinue |
+            Copy-Item -Destination (Join-Path $share "Data/Sys/GameSettings")
+
           Write-Host "=== toolchain ==="
           Get-ChildItem (Join-Path $tc "mingw/bin") -Filter "clang.exe"
           Get-ChildItem (Join-Path $tc "cmake/bin") -Filter "cmake.exe"
@@ -256,6 +271,16 @@ jobs:
           if [ -d "$pkg/Sys/GameSettings" ]; then
             find "$pkg/Sys/GameSettings" -name '*.ini' ! -name 'GBS*.ini' -delete
           fi
+          # Sources the module build needs (resolved beside the tool at runtime).
+          share="$pkg/share/dolphin"
+          mkdir -p "$share/Data/Sys/GameSettings"
+          for d in module-template GXRuntime Source/Core/Core/PowerPC/StaticRecomp; do
+            if [ -d "lib/ModernGekko/vendor/dolphin/$d" ]; then
+              mkdir -p "$share/$(dirname "$d")"
+              cp -R "lib/ModernGekko/vendor/dolphin/$d" "$share/$d"
+            fi
+          done
+          cp lib/ModernGekko/vendor/dolphin/Data/Sys/GameSettings/GBS*.ini "$share/Data/Sys/GameSettings/" 2>/dev/null || true
           find "$pkg" -type f | wc -l
           tar czf dist/BeachSpikers-macOS.tar.gz -C dist BeachSpikers-macOS
 

@@ -160,6 +160,21 @@ else
   fi
 fi
 
+# Sources the module build needs. moderngekko-port resolves them beside itself
+# (share/dolphin), which is what makes a toolchain-only image able to build the
+# module from the player's own disc.
+SHARE=$APPDIR/usr/share/dolphin
+for entry in module-template GXRuntime Source/Core/Core/PowerPC/StaticRecomp; do
+  src="$ROOT/lib/ModernGekko/vendor/dolphin/$entry"
+  [[ -e "$src" ]] || continue
+  mkdir -p "$SHARE/$(dirname "$entry")"
+  cp -a "$src" "$SHARE/$entry"
+done
+mkdir -p "$SHARE/Data/Sys/GameSettings"
+for ini in "$ROOT"/lib/ModernGekko/vendor/dolphin/Data/Sys/GameSettings/GBS*.ini; do
+  [[ -f "$ini" ]] && cp -- "$ini" "$SHARE/Data/Sys/GameSettings/"
+done
+
 # Sys/ must sit beside the executables: FileUtil resolves it from the
 # executable's own directory in this build. Only the parts a GameCube game
 # reaches are copied -- the Wii title databases alone are 12 MB of text.
