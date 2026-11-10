@@ -203,10 +203,18 @@ jobs:
           Get-ChildItem "lib/ModernGekko/vendor/dolphin/Data/Sys/GameSettings" -Filter "GBS*.ini" -ErrorAction SilentlyContinue |
             Copy-Item -Destination (Join-Path $share "Data/Sys/GameSettings")
 
+          # The module template generates its ABI tables with a Python script.
+          $pyZip = Join-Path $tmp "python-embed.zip"
+          if (-not (Test-Path $pyZip)) {
+            Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip" -OutFile $pyZip
+          }
+          Expand-Archive -Path $pyZip -DestinationPath (Join-Path $tc "python") -Force
+
           Write-Host "=== toolchain ==="
           Get-ChildItem (Join-Path $tc "mingw/bin") -Filter "clang.exe"
           Get-ChildItem (Join-Path $tc "cmake/bin") -Filter "cmake.exe"
           Get-ChildItem (Join-Path $tc "bin") -Filter "ninja.exe"
+          Get-ChildItem (Join-Path $tc "python") -Filter "python.exe"
 
           Write-Host "=== package ==="
           Get-ChildItem -Path $pkg -Recurse -File | Measure-Object -Property Length -Sum |
