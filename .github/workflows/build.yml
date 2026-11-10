@@ -110,24 +110,42 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $pkg = "dist/BeachSpikers-Windows"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
           $build = "lib/ModernGekko/build"
-          Write-Host "=== build dir exe files ==="
-          Get-ChildItem -Path $build -Filter *.exe | Select-Object Name
-          $files = @()
-          foreach ($name in @("Beach Spikers.exe", "moderngekko-run.exe")) {
-            $p = Join-Path $build $name
-            if (Test-Path $p) { $files += $p }
+          $exes = @("Beach Spikers.exe", "moderngekko-run.exe")
+          foreach ($name in $exes) {
+            $src = Join-Path $build $name
+            if (-not (Test-Path $src)) { Write-Error "missing $src"; exit 1 }
+            Copy-Item $src -Destination $pkg
           }
-          if ($files.Count -gt 0) {
-            Compress-Archive -Path $files -DestinationPath "dist/BeachSpikers-Windows.zip" -Force
-            Write-Host "Created zip with $($files.Count) files"
-          } else {
-            Write-Error "No executables found to package"
-            Get-ChildItem -Path $build | Select-Object Name
-            exit 1
+          # Runtime DLLs the build produced (SDL3, etc.) must sit beside the exes.
+          Get-ChildItem -Path $build -Filter *.dll -ErrorAction SilentlyContinue |
+            Copy-Item -Destination $pkg
+          # Sys/ is resolved relative to the executable: without it there are no
+          # DSP ROMs, shaders, game INIs or cheat handler, and the game cannot boot.
+          foreach ($entry in @("GC", "Shaders", "Resources", "GameSettings")) {
+            $src = Join-Path $build "Sys/$entry"
+            if (Test-Path $src) {
+              Copy-Item $src -Destination (Join-Path $pkg "Sys") -Recurse -Force
+            }
           }
-          Write-Host "=== dist ==="
+          $codehandler = Join-Path $build "Sys/codehandler.bin"
+          if (Test-Path $codehandler) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $pkg "Sys") | Out-Null
+            Copy-Item $codehandler -Destination (Join-Path $pkg "Sys")
+          }
+          # Only the Beach Spikers per-disc INIs; the Wii title database is 12 MB.
+          $settings = Join-Path $pkg "Sys/GameSettings"
+          if (Test-Path $settings) {
+            Get-ChildItem -Path $settings -Filter *.ini |
+              Where-Object { $_.Name -notlike "GBS*" } |
+              Remove-Item -Force
+          }
+          Write-Host "=== package ==="
+          Get-ChildItem -Path $pkg -Recurse -File | Measure-Object -Property Length -Sum |
+            ForEach-Object { Write-Host "$($_.Count) files, $([math]::Round($_.Sum/1MB,1)) MB" }
+          Compress-Archive -Path "$pkg/*" -DestinationPath "dist/BeachSpikers-Windows.zip" -Force
           Get-ChildItem -Path dist
 
       - name: Upload
@@ -169,9 +187,23 @@ jobs:
 
       - name: Package
         run: |
-          mkdir -p dist
-          tar czf dist/BeachSpikers-macOS.tar.gz -C lib/ModernGekko/build "Beach Spikers" moderngekko-run 2>/dev/null || true
-          ls -la dist/ || true
+          set -eu
+          pkg=dist/BeachSpikers-macOS
+          rm -rf "$pkg"
+          mkdir -p "$pkg"
+          cp "lib/ModernGekko/build/Beach Spikers" "$pkg/"
+          cp lib/ModernGekko/build/moderngekko-run "$pkg/"
+          # Sys/ is resolved relative to the executable, so it has to travel with it.
+          for entry in GC Shaders Resources GameSettings; do
+            [ -d "lib/ModernGekko/build/Sys/$entry" ] && cp -R "lib/ModernGekko/build/Sys/$entry" "$pkg/Sys/" || true
+          done
+          [ -f lib/ModernGekko/build/Sys/codehandler.bin ] && cp lib/ModernGekko/build/Sys/codehandler.bin "$pkg/Sys/" || true
+          # Only the Beach Spikers per-disc INIs; the Wii database is 12 MB.
+          if [ -d "$pkg/Sys/GameSettings" ]; then
+            find "$pkg/Sys/GameSettings" -name '*.ini' ! -name 'GBS*.ini' -delete
+          fi
+          find "$pkg" -type f | wc -l
+          tar czf dist/BeachSpikers-macOS.tar.gz -C dist BeachSpikers-macOS
 
       - name: Upload
         uses: actions/upload-artifact@v4
