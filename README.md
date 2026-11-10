@@ -323,8 +323,13 @@ GitHub Actions builds a toolchain-only package on every push and on releases
 | Windows  | zip of built binaries |
 | macOS    | tarball of built binary |
 
-These builds contain **no game module and no disc image** — on first run the
-launcher asks for your own legally-owned ISO/RVZ/WBFS and recompiles it locally.
+These builds contain **no game module and no disc image**. On first run the
+launcher asks for your own legally-owned ISO/RVZ/WBFS, extracts it, and offers to
+**build the recompiled module** (`g<disc id>_recomp.dll` / `.dylib` / `.so`) from
+it: every package ships the builder (`moderngekko-port` + `dolrecomp`), and the
+module lands in `<user dir>/StaticRecompModules/`. Building needs a C compiler —
+gcc/clang on Linux and macOS, MSVC or clang on Windows — and takes a few minutes;
+the output goes to `<user dir>/Logs/module-build.log`.
 To ship a build that already contains a region module, build locally with
 `make recompile GAME=beach && make appimage`.
 
