@@ -233,7 +233,25 @@ for tab in "${TABS[@]}"; do
   frame=$(capture "$tab")
   if [[ -z $frame ]]; then bad "$tab: no frame was captured"; continue; fi
   SHOT[$tab]=$frame
-  HASH[$tab]=$(magick "$frame" -crop 720x472+90+10 +repage -format "%#" info: 2>/dev/null)
+  # The panel is sized by ConfigMenu::Draw() as a share of the backbuffer, so a
+  # hardcoded crop measured empty game pixels and every tab hashed the same.
+  # Derive the panel box from the frame once, then crop inside it.
+  if [[ -z ${WIN_W:-} ]]; then
+    read -r frame_w frame_h <<<"$(sed -n 2p "$frame" | awk '{print $1, $2}')"
+    menu_cap_w=$((frame_w - 20 < 1180 ? frame_w - 20 : 1180))
+    menu_cap_h=$((frame_h - 20 < 820 ? frame_h - 20 : 820))
+    WIN_W=$((frame_w * 45 / 100))
+    (( WIN_W > menu_cap_w )) && WIN_W=$menu_cap_w
+    (( WIN_W < 320 )) && WIN_W=320
+    WIN_H=$((frame_h * 60 / 100))
+    (( WIN_H > menu_cap_h )) && WIN_H=$menu_cap_h
+    (( WIN_H < 280 )) && WIN_H=280
+    WIN_LEFT=$(((frame_w - WIN_W) / 2))
+    WIN_TOP=$(((frame_h - WIN_H) / 2))
+  fi
+  HASH[$tab]=$(magick "$frame" \
+    -crop $((WIN_W - 40))x$((WIN_H - 110))+$((WIN_LEFT + 20))+$((WIN_TOP + 80)) \
+    +repage -format "%#" info: 2>/dev/null)
   ok "$tab: captured $(basename "$frame")"
 done
 
@@ -283,11 +301,10 @@ fi
 # rect the menu submits is therefore checked against the window it claims to be
 # drawing into, using the same clamping arithmetic the menu uses.
 echo "  -- fits inside the panel --"
-read -r frame_w frame_h <<<"$(sed -n 2p "${SHOT[Display]}" | awk '{print $1, $2}')"
-win_w=$((frame_w - 20 > 720 ? 720 : frame_w - 20))
-win_h=$((frame_h - 20 > 560 ? 560 : frame_h - 20))
-win_left=$(((frame_w - win_w) / 2))
-win_top=$(((frame_h - win_h) / 2))
+win_w=$WIN_W
+win_h=$WIN_H
+win_left=$WIN_LEFT
+win_top=$WIN_TOP
 win_right=$((win_left + win_w))
 win_bottom=$((win_top + win_h))
 checked=0
@@ -358,11 +375,14 @@ if [[ $band_h -ge 8 ]]; then
   while read -r count mean; do
     mode=$mean
     break
-  done < <(row_profile "$frame" 98 "$band_top" 700 "$band_h" | sort -n | uniq -c | sort -rn)
+  # The band is the panel's own width, not a hardcoded strip at x=98: the menu
+  # is centred, so a fixed x measured empty game pixels and reported a 0 px
+  # header no matter how the header was drawn.
+  done < <(row_profile "$frame" $((win_left + 20)) "$band_top" $((win_w - 40)) "$band_h" | sort -n | uniq -c | sort -rn)
   while read -r value; do
     d=$((value > mode ? value - mode : mode - value))
     [[ $d -ge 5 ]] && rows=$((rows + 1))
-  done < <(row_profile "$frame" 98 "$band_top" 700 "$band_h")
+  done < <(row_profile "$frame" $((win_left + 20)) "$band_top" $((win_w - 40)) "$band_h")
   if [[ $rows -ge 7 && $rows -le 16 ]]; then
     ok "the header line is $rows px tall (legible, inside its band)"
   else
