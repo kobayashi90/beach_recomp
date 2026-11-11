@@ -5,6 +5,11 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows:
+        description: "Also build the Windows package (llvm-mingw, experimental)"
+        type: boolean
+        default: false
   release:
     types: [created]
 
@@ -76,8 +81,20 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: warn
 
+  # Windows is opt-in (workflow_dispatch -> windows=true) while it is being
+  # rebuilt around ONE toolchain family.
+  #
+  # The old job mixed families: the runner/launcher came from MSVC, while the
+  # module a player builds was compiled by the llvm-mingw clang in the package.
+  # Two different C++ ABIs and two C runtimes in one process is exactly the kind
+  # of thing that compiles and then fails at load time, and nothing in the
+  # pipeline ever ran the result. This job now builds the runner, the launcher and
+  # the shipped module compiler with the same llvm-mingw toolchain, so there is
+  # one family end to end, and the artifact is meant to be checked with
+  # tools/win-smoke.sh (wine + a module) before it is published.
   windows:
-    name: Windows (zip)
+    name: Windows (zip, llvm-mingw)
+    if: github.event_name == 'workflow_dispatch' && inputs.windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,24 +105,54 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init --recursive --force
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install llvm-mingw (one family for the build and for players)
+        shell: pwsh
+        run: |
+          $tmp = $env:RUNNER_TEMP
+          $zip = Join-Path $tmp "llvm-mingw.zip"
+          if (-not (Test-Path $zip)) {
+            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-x86_64.zip" -OutFile $zip
+          }
+          Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp "llvm") -Force
+          $src = Get-ChildItem (Join-Path $tmp "llvm") -Directory | Select-Object -First 1
+          $tc = Join-Path $env:RUNNER_TEMP "toolchain"
+          New-Item -ItemType Directory -Force -Path $tc | Out-Null
+          Move-Item $src.FullName (Join-Path $tc "mingw")
+          $mingw = Join-Path $tc "mingw/bin"
+          "LLVM_MINGW=$((Join-Path $env:RUNNER_TEMP 'toolchain/mingw'))" >> $env:GITHUB_ENV
+          $mingw >> $env:GITHUB_PATH
 
       - name: Configure ModernGekko
-        run: >
-          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers"
-          -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers"
-          -DMODERNGEKKO_APP_ID="io.github.beachspikers"
-          -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
+        shell: pwsh
+        run: |
+          $mingw = Join-Path $env:RUNNER_TEMP "toolchain/mingw"
+          # Static runtimes: a zip whose exes need libstdc++-6.dll and
+          # libwinpthread-1.dll is a zip that fails on a clean machine.
+          cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$mingw/bin/clang.exe" `
+            -DCMAKE_CXX_COMPILER="$mingw/bin/clang++.exe" `
+            -DCMAKE_RC_COMPILER="$mingw/bin/llvm-rc.exe" `
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" `
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libgcc -static-libstdc++" `
+            -DBUILD_TESTING=OFF `
+            -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers" `
+            -DMODERNGEKKO_LAUNCHER_OUTPUT_NAME="Beach Spikers" `
+            -DMODERNGEKKO_APP_ID="io.github.beachspikers" `
+            -DMODERNGEKKO_DEFAULT_WINDOW_TITLE="Beach Spikers"
 
       - name: Build ModernGekko
-        run: cmake --build lib/ModernGekko/build --config Release --parallel
+        run: cmake --build lib/ModernGekko/build --parallel
 
       - name: Configure DolRecomp
-        run: cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+        run: |
+          $mingw = Join-Path $env:RUNNER_TEMP "toolchain/mingw"
+          cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$mingw/bin/clang.exe" -DCMAKE_CXX_COMPILER="$mingw/bin/clang++.exe"
 
       - name: Build DolRecomp
-        run: cmake --build lib/DolRecomp/build --config Release --parallel
+        run: cmake --build lib/DolRecomp/build --parallel
 
       - name: Package
         shell: pwsh
@@ -113,74 +160,53 @@ jobs:
           $pkg = "dist/BeachSpikers-Windows"
           New-Item -ItemType Directory -Force -Path $pkg | Out-Null
           $build = "lib/ModernGekko/build"
-          # moderngekko-port + dolrecomp let a player generate their own module
-          # from their disc, which is the only redistributable way to ship one.
           $exes = @("Beach Spikers.exe", "moderngekko-run.exe", "moderngekko-port.exe", "dolrecomp.exe")
           foreach ($name in $exes) {
             $src = Join-Path $build $name
             if (-not (Test-Path $src)) { Write-Error "missing $src"; exit 1 }
             Copy-Item $src -Destination $pkg
           }
-          # Runtime DLLs the build produced (SDL3, etc.) must sit beside the exes.
+          # Whatever runtime DLLs the build still produces must travel with it.
           Get-ChildItem -Path $build -Filter *.dll -ErrorAction SilentlyContinue |
             Copy-Item -Destination $pkg
-          # Sys/ is resolved relative to the executable: without it there are no
-          # DSP ROMs, shaders, game INIs or cheat handler, and the game cannot boot.
           foreach ($entry in @("GC", "Shaders", "Resources", "GameSettings")) {
             $src = Join-Path $build "Sys/$entry"
-            if (Test-Path $src) {
-              Copy-Item $src -Destination (Join-Path $pkg "Sys") -Recurse -Force
-            }
+            if (Test-Path $src) { Copy-Item $src -Destination (Join-Path $pkg "Sys") -Recurse -Force }
           }
           $codehandler = Join-Path $build "Sys/codehandler.bin"
           if (Test-Path $codehandler) {
             New-Item -ItemType Directory -Force -Path (Join-Path $pkg "Sys") | Out-Null
             Copy-Item $codehandler -Destination (Join-Path $pkg "Sys")
           }
-          # Only the Beach Spikers per-disc INIs; the Wii title database is 12 MB.
           $settings = Join-Path $pkg "Sys/GameSettings"
           if (Test-Path $settings) {
-            Get-ChildItem -Path $settings -Filter *.ini |
-              Where-Object { $_.Name -notlike "GBS*" } |
-              Remove-Item -Force
+            Get-ChildItem -Path $settings -Filter *.ini | Where-Object { $_.Name -notlike "GBS*" } | Remove-Item -Force
           }
-          # --- bundled build toolchain -------------------------------------
-          # A player with no compiler installed must still be able to generate
-          # the recompiled module from their own disc. llvm-mingw is a
-          # self-contained clang + mingw-w64 sysroot (no Visual Studio needed);
-          # cmake and ninja are portable builds. Together they add ~180 MB to
-          # the zip, which buys a one-click install on a clean machine.
+
+          # --- toolchain for the player -------------------------------------
+          # The same llvm-mingw the package was built with. Identical family,
+          # identical flags, so the module a player builds matches the runner
+          # that loads it.
           $tc = Join-Path $pkg "Toolchain"
           New-Item -ItemType Directory -Force -Path (Join-Path $tc "bin") | Out-Null
-          $tmp = $env:RUNNER_TEMP
-
-          $llvmZip = Join-Path $tmp "llvm-mingw.zip"
-          if (-not (Test-Path $llvmZip)) {
-            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-msvcrt-x86_64.zip" -OutFile $llvmZip
-          }
-          Expand-Archive -Path $llvmZip -DestinationPath (Join-Path $tmp "llvm") -Force
-          $llvmSrc = Get-ChildItem (Join-Path $tmp "llvm") -Directory | Select-Object -First 1
-          Move-Item $llvmSrc.FullName (Join-Path $tc "mingw")
-          $mingw = Join-Path $tc "mingw"
-          # Only the C toolchain is used: drop the C++ headers, the extra LLVM
-          # tools (clangd/lldb/tidy) and the non-x86_64 target wrappers.
-          Remove-Item (Join-Path $mingw "include/c++") -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item (Join-Path $mingw "lib/libear"),(Join-Path $mingw "lib/libscanbuild") -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item (Join-Path $env:RUNNER_TEMP "toolchain/mingw") (Join-Path $tc "mingw") -Recurse -Force
+          $mingwDir = Join-Path $tc "mingw"
+          Remove-Item (Join-Path $mingwDir "include/c++") -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $mingwDir "lib/libear"),(Join-Path $mingwDir "lib/libscanbuild") -Recurse -Force -ErrorAction SilentlyContinue
           $dropBins = @("clangd*","clang-tidy*","clang-format*","clang-scan-deps*","clang-apply*",
                         "lldb*","liblldb*","libpython*","libomp*","scan-build*","scan-view*",
                         "aarch64-*","armv7-*","i686-*","arm64-*")
           foreach ($pattern in $dropBins) {
-            Get-ChildItem (Join-Path $mingw "bin") -Filter $pattern -ErrorAction SilentlyContinue |
-              Remove-Item -Force
+            Get-ChildItem (Join-Path $mingwDir "bin") -Filter $pattern -ErrorAction SilentlyContinue | Remove-Item -Force
           }
 
+          $tmp = $env:RUNNER_TEMP
           $cmakeZip = Join-Path $tmp "cmake.zip"
           if (-not (Test-Path $cmakeZip)) {
             Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-windows-x86_64.zip" -OutFile $cmakeZip
           }
           Expand-Archive -Path $cmakeZip -DestinationPath (Join-Path $tmp "cmake") -Force
-          $cmakeSrc = Get-ChildItem (Join-Path $tmp "cmake") -Directory | Select-Object -First 1
-          Move-Item $cmakeSrc.FullName (Join-Path $tc "cmake")
+          Move-Item (Get-ChildItem (Join-Path $tmp "cmake") -Directory | Select-Object -First 1).FullName (Join-Path $tc "cmake")
 
           $ninjaZip = Join-Path $tmp "ninja.zip"
           if (-not (Test-Path $ninjaZip)) {
@@ -188,8 +214,6 @@ jobs:
           }
           Expand-Archive -Path $ninjaZip -DestinationPath (Join-Path $tc "bin") -Force
 
-          # Sources the module build needs. moderngekko-port resolves these
-          # beside itself (share/dolphin) so the packaged tool is relocatable.
           $share = Join-Path $pkg "share/dolphin"
           New-Item -ItemType Directory -Force -Path (Join-Path $share "Data/Sys/GameSettings") | Out-Null
           foreach ($d in @("module-template", "GXRuntime", "Source/Core/Core/PowerPC/StaticRecomp")) {
@@ -203,18 +227,11 @@ jobs:
           Get-ChildItem "lib/ModernGekko/vendor/dolphin/Data/Sys/GameSettings" -Filter "GBS*.ini" -ErrorAction SilentlyContinue |
             Copy-Item -Destination (Join-Path $share "Data/Sys/GameSettings")
 
-          # The module template generates its ABI tables with a Python script.
           $pyZip = Join-Path $tmp "python-embed.zip"
           if (-not (Test-Path $pyZip)) {
             Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip" -OutFile $pyZip
           }
           Expand-Archive -Path $pyZip -DestinationPath (Join-Path $tc "python") -Force
-
-          Write-Host "=== toolchain ==="
-          Get-ChildItem (Join-Path $tc "mingw/bin") -Filter "clang.exe"
-          Get-ChildItem (Join-Path $tc "cmake/bin") -Filter "cmake.exe"
-          Get-ChildItem (Join-Path $tc "bin") -Filter "ninja.exe"
-          Get-ChildItem (Join-Path $tc "python") -Filter "python.exe"
 
           Write-Host "=== package ==="
           Get-ChildItem -Path $pkg -Recurse -File | Measure-Object -Property Length -Sum |
@@ -270,16 +287,13 @@ jobs:
           for tool in moderngekko-port dolrecomp; do
             [ -x "lib/ModernGekko/build/$tool" ] && cp "lib/ModernGekko/build/$tool" "$pkg/" || true
           done
-          # Sys/ is resolved relative to the executable, so it has to travel with it.
           for entry in GC Shaders Resources GameSettings; do
             [ -d "lib/ModernGekko/build/Sys/$entry" ] && cp -R "lib/ModernGekko/build/Sys/$entry" "$pkg/Sys/" || true
           done
           [ -f lib/ModernGekko/build/Sys/codehandler.bin ] && cp lib/ModernGekko/build/Sys/codehandler.bin "$pkg/Sys/" || true
-          # Only the Beach Spikers per-disc INIs; the Wii database is 12 MB.
           if [ -d "$pkg/Sys/GameSettings" ]; then
             find "$pkg/Sys/GameSettings" -name '*.ini' ! -name 'GBS*.ini' -delete
           fi
-          # Sources the module build needs (resolved beside the tool at runtime).
           share="$pkg/share/dolphin"
           mkdir -p "$share/Data/Sys/GameSettings"
           for d in module-template GXRuntime Source/Core/Core/PowerPC/StaticRecomp; do

@@ -118,6 +118,64 @@ gcda_count() {
   find "$(find_build)" -name '*.gcda' | wc -l
 }
 
+# write_manifest <module-build dir>
+#
+# The module directory's manifest.txt is written by moderngekko-port and
+# describes the library *that tool* built. pgo.sh builds with gcc directly, so
+# after a tuned build the manifest still claimed "-O2 ... link:no-lto" while the
+# library on disk was -O3 + PGO + LTO + -march=native. Anything that reads the
+# manifest (identity checks, "is this module tuned?") then concluded the module
+# was untuned. This rewrites the lines that describe the build and records the
+# PGO facts so the file matches the binary beside it.
+write_manifest() {
+  local build=$1
+  local artifact; artifact=$(dirname "$build")
+  local manifest="$artifact/manifest.txt"
+  if [ ! -f "$manifest" ]; then
+    echo "pgo: no manifest at $manifest (nothing to update)"
+    return 0
+  fi
+  local cflags linker opt compiler_line stage gcda
+  cflags=$(sed -n 's/^CMAKE_C_FLAGS:STRING=//p' "$build/CMakeCache.txt" | head -1)
+  linker=$(sed -n 's/^CMAKE_SHARED_LINKER_FLAGS:STRING=//p' "$build/CMakeCache.txt" | head -1)
+  opt=$(sed -n 's/^RECOMPCORE_MODULE_OPT_LEVEL:STRING=//p' "$build/CMakeCache.txt" | head -1)
+  compiler_line=$(gcc --version 2>/dev/null | head -1)
+  gcda=$(find "$build" -name '*.gcda' | wc -l)
+  case "$cflags" in
+    *-fprofile-use*) stage=use ;;
+    *-fprofile-generate*) stage=generate ;;
+    *) stage=plain ;;
+  esac
+  python3 - "$manifest" "$opt" "$cflags" "$linker" "$compiler_line" "$stage" "$gcda" "$PGO_DIR" "$REGION" <<'PY'
+import sys
+path, opt, cflags, linker, compiler, stage, gcda, pgo_dir, region = sys.argv[1:10]
+opt = opt or '2'
+link = linker.strip() or 'no-lto'
+lines = open(path).read().splitlines()
+drop = ('flags=', 'compiler=', 'pgo_mode=', 'pgo_toolchain=',
+        'pgo_profile_dir=', 'pgo_gcda=', 'pgo_region=', 'build_stage=')
+# Keys are "key=value" at column 0; anything else (a multi-line compiler
+# --version banner, stray blank lines) is noise that the old manifest carried.
+kept = [line for line in lines
+        if not line.startswith(drop) and '=' in line and not line.startswith(' ')]
+kept.append('compiler=' + compiler)
+kept.append('flags=compile:-O%s %s link:%s' % (opt, cflags.strip(), link))
+kept.append('pgo_mode=' + ('use' if stage == 'use' else
+                           'generate' if stage == 'generate' else 'off'))
+kept.append('pgo_toolchain=gcc+gcov')
+kept.append('pgo_region=' + region)
+kept.append('pgo_profile_dir=' + pgo_dir)
+kept.append('pgo_gcda=' + str(gcda))
+kept.append('build_stage=' + stage)
+open(path, 'w').write('\n'.join(kept) + '\n')
+PY
+  echo "pgo: manifest updated: $manifest"
+}
+
+cmd_manifest() {
+  write_manifest "$(find_build)"
+}
+
 cmd_status() {
   local build; build=$(find_build)
   local artifact; artifact=$(dirname "$build")
@@ -315,6 +373,7 @@ PY
   set_cache "$cache" CMAKE_C_FLAGS "$use"
   set_cache "$cache" RECOMPCORE_MODULE_OPT_LEVEL 3
   reconfigure_and_build "$build" use
+  write_manifest "$build"
   echo "pgo: use stage done. Measure with: ./tools/speed.sh pgo 40 --load-state $NFACTS"
 }
 
@@ -328,6 +387,7 @@ cmd_restore() {
   set_cache "$cache" CMAKE_C_FLAGS "$(sed -n 's/^c_flags=//p' "$PGO_DIR/baseline.txt")"
   set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS "$(sed -n 's/^linker_flags=//p' "$PGO_DIR/baseline.txt")"
   set_cache "$cache" RECOMPCORE_MODULE_OPT_LEVEL "$(sed -n 's/^opt_level=//p' "$PGO_DIR/baseline.txt")"
+  write_manifest "$build"
   echo "pgo: restored $snap"
   cmd_status
 }
@@ -339,5 +399,6 @@ case "${1:-status}" in
   train)    cmd_train ;;
   use)      cmd_use ;;
   restore)  cmd_restore ;;
-  *) echo "usage: $0 {status|snapshot|generate|train|use|restore}" >&2; exit 2 ;;
+  manifest) cmd_manifest ;;
+  *) echo "usage: $0 {status|snapshot|generate|train|use|restore|manifest}" >&2; exit 2 ;;
 esac

@@ -238,12 +238,15 @@ for tab in "${TABS[@]}"; do
   # Derive the panel box from the frame once, then crop inside it.
   if [[ -z ${WIN_W:-} ]]; then
     read -r frame_w frame_h <<<"$(sed -n 2p "$frame" | awk '{print $1, $2}')"
+    # Mirrors ConfigMenu::Draw(): width = clamp(w*0.45, 440, min(w-20,1180)),
+    # height = clamp(max(h*0.62, 560), 280, min(h-20,820)).
     menu_cap_w=$((frame_w - 20 < 1180 ? frame_w - 20 : 1180))
     menu_cap_h=$((frame_h - 20 < 820 ? frame_h - 20 : 820))
     WIN_W=$((frame_w * 45 / 100))
     (( WIN_W > menu_cap_w )) && WIN_W=$menu_cap_w
-    (( WIN_W < 320 )) && WIN_W=320
-    WIN_H=$((frame_h * 60 / 100))
+    (( WIN_W < 440 )) && WIN_W=440
+    WIN_H=$((frame_h * 62 / 100))
+    (( WIN_H < 560 )) && WIN_H=560
     (( WIN_H > menu_cap_h )) && WIN_H=$menu_cap_h
     (( WIN_H < 280 )) && WIN_H=280
     WIN_LEFT=$(((frame_w - WIN_W) / 2))

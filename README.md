@@ -317,21 +317,42 @@ for the disc image a second time.
 GitHub Actions builds a toolchain-only package on every push and on releases
 (see [`.github/workflows/build.yml`](.github/workflows/build.yml)):
 
-| Platform | Artifact |
-|----------|----------|
-| Linux    | AppImage (single file, no install step) |
-| Windows  | zip of built binaries |
-| macOS    | tarball of built binary |
+| Platform | Artifact | Trigger |
+|----------|----------|---------|
+| Linux    | AppImage (single file, no install step) | every push |
+| macOS    | tarball of built binary | every push |
+| Windows  | zip of binaries + bundled toolchain | `workflow_dispatch` with `windows` = true (experimental) |
+
+The Windows job is manual while it is rebuilt around a **single toolchain
+family**. The old package mixed families: an MSVC-built runner/launcher loading a
+module compiled by the bundled llvm-mingw clang — two C++ ABIs and two C runtimes
+in one process, which compiles fine and then fails at load time. The job now
+builds everything with llvm-mingw (static libgcc/libstdc++, no runtime DLLs to
+lose) and ships that same compiler for player-side module builds.
+
+A Windows zip is only "done" once `tools/win-smoke.sh <zip>` passes: it extracts
+the package, checks every non-system DLL the module imports is either shipped or
+a Windows DLL, and boots the game under Wine with the packaged runner.
+
+No artifact is published from that job until it has been checked that way.
 
 These builds contain **no game module and no disc image**. On first run the
 launcher asks for your own legally-owned ISO/RVZ/WBFS, extracts it, and offers to
 **build the recompiled module** (`g<disc id>_recomp.dll` / `.dylib` / `.so`) from
 it: every package ships the builder (`moderngekko-port` + `dolrecomp`), and the
 module lands in `<user dir>/StaticRecompModules/`. Building needs a C compiler —
-gcc/clang on Linux and macOS, MSVC or clang on Windows — and takes a few minutes;
-the output goes to `<user dir>/Logs/module-build.log`.
+gcc/clang on Linux and macOS — and takes a few minutes; the module is built at
+`-O2` with link-time optimisation (and the profile-guided flags when the build
+host provides a matching profile). The output goes to
+`<user dir>/Logs/module-build.log`.
 To ship a build that already contains a region module, build locally with
 `make recompile GAME=beach && make appimage`.
+
+A fresh install starts on the settings this build is verified at: Vulkan,
+2× EFB (`1280x720`), vsync on, stretched aspect ratio (fills a 16:9 window with
+the 4:3 picture) and the frame counter in the window title. Those are the values
+in `ConfigResult` / the first-run `config.ini`, so every packaged build — CI
+included — starts from them. PAL holds 100 % (50 fps) with them.
 
 ## Packaging (AppImage)
 
