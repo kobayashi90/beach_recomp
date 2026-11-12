@@ -248,18 +248,60 @@ jobs:
           }
           Expand-Archive -Path $pyZip -DestinationPath (Join-Path $tc "python") -Force
 
+          # --- shrink the payload ------------------------------------------
+          # The unpacked package was 826 MB, almost all of it toolchain that the
+          # module build never touches:
+          #   * sysroots for aarch64 / i686 / armv7 (~215 MB) -- the module is
+          #     x86_64 only;
+          #   * a bundled Python inside mingw/ (46 MB, nothing invokes it);
+          #   * libc++ headers (~60 MB) -- module-template is `project(... C)`,
+          #     so no C++ translation unit is ever compiled;
+          #   * CMake's doc/ and man/ trees (~55 MB) plus cpack/ctest.
+          foreach ($drop in @(
+              "Toolchain/mingw/aarch64-w64-mingw32",
+              "Toolchain/mingw/i686-w64-mingw32",
+              "Toolchain/mingw/armv7-w64-mingw32",
+              "Toolchain/mingw/arm64ec-w64-mingw32",
+              "Toolchain/mingw/python",
+              "Toolchain/mingw/include/c++",
+              "Toolchain/cmake/doc",
+              "Toolchain/cmake/man")) {
+            $path = Join-Path $pkg $drop
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "dropped $drop"
+            }
+          }
+          foreach ($drop in @("Toolchain/cmake/bin/cpack.exe", "Toolchain/cmake/bin/ctest.exe")) {
+            $path = Join-Path $pkg $drop
+            if (Test-Path $path) { Remove-Item $path -Force -ErrorAction SilentlyContinue }
+          }
+          # Release binaries carry symbol tables that nothing reads once they are
+          # stripped: ~50 MB of the package was four PE files.
+          $strip = Join-Path $pkg "Toolchain/mingw/bin/llvm-strip.exe"
+          if (Test-Path $strip) {
+            foreach ($exe in Get-ChildItem -Path $pkg -Filter *.exe) {
+              & $strip --strip-all $exe.FullName 2>$null
+            }
+            Write-Host "stripped package executables"
+          }
+
           Write-Host "=== package ==="
           Get-ChildItem -Path $pkg -Recurse -File | Measure-Object -Property Length -Sum |
             ForEach-Object { Write-Host "$($_.Count) files, $([math]::Round($_.Sum/1MB,1)) MB" }
           Compress-Archive -Path "$pkg/*" -DestinationPath "dist/BeachSpikers-Windows.zip" -Force
-          Get-ChildItem -Path dist
+          # Upload only the archive. Uploading dist/* as well shipped the payload
+          # twice (the folder *and* the zip inside the artifact), which is how a
+          # 232 MB package turned into a 439 MB download.
+          Remove-Item $pkg -Recurse -Force
+          Get-ChildItem -Path dist | ForEach-Object { Write-Host "$($_.Name) $([math]::Round($_.Length/1MB,1)) MB" }
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: BeachSpikers-Windows
-          path: dist/*
-          if-no-files-found: warn
+          path: dist/BeachSpikers-Windows.zip
+          if-no-files-found: error
 
   macos:
     name: macOS (app)
