@@ -129,6 +129,18 @@ jobs:
           # .cmake files, and a Windows path there is read as an escape sequence
           # ("D:\a\_temp\..." -> "Invalid character escape '\a'").
           $mingw = (Join-Path $env:RUNNER_TEMP "toolchain/mingw").Replace('\', '/')
+          # `#pragma comment(lib, "...")` is an MSVC convention: clang/mingw
+          # ignores it (we already see "unknown pragma ignored" for ntdll), so
+          # every Windows system library the tree would have auto-linked is
+          # named here once. Duplicates are harmless.
+          $systemLibs = @(
+            "winmm", "hid", "setupapi", "dbghelp", "ws2_32", "iphlpapi", "ole32",
+            "oleaut32", "uuid", "comctl32", "version", "dwmapi", "bcrypt",
+            "shlwapi", "userenv", "wininet", "crypt32", "msimg32", "psapi",
+            "gdi32", "user32", "shell32", "advapi32", "comdlg32", "ntdll",
+            "avrt", "winhttp", "wbemuuid", "powrprof"
+          ) | ForEach-Object { "-l$_" }
+          $systemLibs = $systemLibs -join ' '
           # Static runtimes: a zip whose exes need libstdc++-6.dll and
           # libwinpthread-1.dll is a zip that fails on a clean machine.
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja `
@@ -136,7 +148,7 @@ jobs:
             -DCMAKE_C_COMPILER="$mingw/bin/clang.exe" `
             -DCMAKE_CXX_COMPILER="$mingw/bin/clang++.exe" `
             -DCMAKE_RC_COMPILER="$mingw/bin/llvm-rc.exe" `
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" `
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++ $systemLibs" `
             -DCMAKE_SHARED_LINKER_FLAGS="-static-libgcc -static-libstdc++" `
             -DBUILD_TESTING=OFF `
             -DMODERNGEKKO_FRONTEND_NAME="Beach Spikers" `
