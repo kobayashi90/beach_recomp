@@ -94,7 +94,9 @@ jobs:
   # tools/win-smoke.sh (wine + a module) before it is published.
   windows:
     name: Windows (zip, llvm-mingw)
-    if: github.event_name == 'workflow_dispatch' && inputs.windows
+    # A published release must carry all three packages, so the tag build runs
+    # Windows too; ordinary pushes stay Linux+macOS and leave it manual.
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
