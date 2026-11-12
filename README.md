@@ -323,6 +323,13 @@ GitHub Actions builds a toolchain-only package on every push and on releases
 | macOS    | tarball of built binary | every push |
 | Windows  | zip of binaries + bundled toolchain | `workflow_dispatch` with `windows` = true (experimental) |
 
+The tuned modules are built at **`-march=x86-64-v3`** (AVX2/BMI/FMA, i.e. any CPU
+from 2013 or later) rather than `-march=native`. Measured on PAL, v3 is
+indistinguishable from a native build (0.975/0.977 vs 0.977/0.990 speed on the
+same savestate, interleaved); `x86-64-v2` (SSE4.2, 2009+) measured ~5 % slower on
+NTSC-U, so it is not the shipping baseline. A build made on demand uses whatever
+the player's machine supports, which is the fallback for older hardware.
+
 The Windows job is manual while it is rebuilt around a **single toolchain
 family**. The old package mixed families: an MSVC-built runner/launcher loading a
 module compiled by the bundled llvm-mingw clang — two C++ ABIs and two C runtimes

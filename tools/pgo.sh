@@ -24,6 +24,10 @@ export MG_HARNESS=1  # marks this as a measurement instance; killgame.sh refuses
 # -flto=4 finishes in ~13 min with a byte-identical-sized result -- so there is
 # no reason to ever build the un-LTO'd variant for anything but a quick probe.
 #
+# MARCH=native (default) or a portable level (x86-64-v2, x86-64-v3). The
+# release modules are built at a baseline so they do not require the exact CPU
+# they were profiled on.
+#
 # Every stage refuses to start while an emulator instance is alive: rewriting
 # the .so under a live dlopen() is a lazy-page-fault hazard, and a busy CPU
 # makes the training runs unrepresentative.
@@ -54,6 +58,20 @@ else
   NFACTS=$PGO_STATE
 fi
 JOBS=${JOBS:-6}
+# -march=native ties the module to the CPU it was built on: the tuned libraries
+# carry FMA3/AVX2 code, so a pre-Haswell or Atom-class CPU takes SIGILL the
+# moment the module is loaded. MARCH picks the tuning level instead, so a release
+# build can target a baseline (x86-64-v2 = SSE4.2/popcnt, v3 = AVX2/BMI/FMA) and
+# still be a tuned build. Measure before changing this: MARCH=v3 costs nothing
+# measurable here, MARCH=v2 is the widest baseline.
+MARCH=${MARCH:-native}
+# -mtune takes a microarchitecture, not a level ("x86-64-v3" is rejected), so a
+# portable -march pairs with generic tuning unless MTUNE says otherwise.
+if [ "$MARCH" = native ]; then
+  MTUNE=${MTUNE:-native}
+else
+  MTUNE=${MTUNE:-generic}
+fi
 
 die() { echo "pgo: $*" >&2; exit 1; }
 
@@ -95,7 +113,7 @@ cache_flags() {
   sed -n 's/^CMAKE_C_FLAGS:STRING=//p' "$cache" | head -1
 }
 
-reconfigure_and_build() {
+reconfigure_only() {
   local build=$1 label=$2
   local artifact; artifact=$(dirname "$build")
   # Wipe objects and the library so nothing is reused across a flag change.
@@ -104,6 +122,10 @@ reconfigure_and_build() {
   echo "pgo: [$label] reconfiguring"
   cmake -S "$DIR/lib/ModernGekko/vendor/dolphin/module-template" -B "$build" \
     >/dev/null 2>&1 || die "cmake reconfigure failed"
+}
+
+build_now() {
+  local build=$1 label=$2
   local t0; t0=$(date +%s)
   echo "pgo: [$label] building (log: $PGO_DIR/build-$label.log)"
   if ! ninja -C "$build" -j"$JOBS" >"$PGO_DIR/build-$label.log" 2>&1; then
@@ -112,6 +134,11 @@ reconfigure_and_build() {
   fi
   local dt=$(( $(date +%s) - t0 ))
   echo "pgo: [$label] built in $((dt/60))m$((dt%60))s -> $(stat -c%s "$build/$MODULE_NAME") bytes"
+}
+
+reconfigure_and_build() {
+  reconfigure_only "$1" "$2"
+  build_now "$1" "$2"
 }
 
 gcda_count() {
@@ -146,14 +173,15 @@ write_manifest() {
     *-fprofile-generate*) stage=generate ;;
     *) stage=plain ;;
   esac
-  python3 - "$manifest" "$opt" "$cflags" "$linker" "$compiler_line" "$stage" "$gcda" "$PGO_DIR" "$REGION" <<'PY'
+  python3 - "$manifest" "$opt" "$cflags" "$linker" "$compiler_line" "$stage" "$gcda" "$PGO_DIR" "$REGION" "$MARCH" <<'PY'
 import sys
-path, opt, cflags, linker, compiler, stage, gcda, pgo_dir, region = sys.argv[1:10]
+path, opt, cflags, linker, compiler, stage, gcda, pgo_dir, region, march = sys.argv[1:11]
 opt = opt or '2'
 link = linker.strip() or 'no-lto'
 lines = open(path).read().splitlines()
 drop = ('flags=', 'compiler=', 'pgo_mode=', 'pgo_toolchain=',
-        'pgo_profile_dir=', 'pgo_gcda=', 'pgo_region=', 'build_stage=')
+        'pgo_profile_dir=', 'pgo_gcda=', 'pgo_region=', 'pgo_march=',
+        'build_stage=')
 # Keys are "key=value" at column 0; anything else (a multi-line compiler
 # --version banner, stray blank lines) is noise that the old manifest carried.
 kept = [line for line in lines
@@ -164,6 +192,7 @@ kept.append('pgo_mode=' + ('use' if stage == 'use' else
                            'generate' if stage == 'generate' else 'off'))
 kept.append('pgo_toolchain=gcc+gcov')
 kept.append('pgo_region=' + region)
+kept.append('pgo_march=' + march)
 kept.append('pgo_profile_dir=' + pgo_dir)
 kept.append('pgo_gcda=' + str(gcda))
 kept.append('build_stage=' + stage)
@@ -221,7 +250,7 @@ cmd_generate() {
   # into the count, and a stale .gcda would be merged into the fresh data.
   find "$build" -name '*.gcda' -delete
   echo "pgo: cleared stale gcda (was $(gcda_count) after delete... expected 0)"
-  local gen="-fprofile-generate -fprofile-update=atomic -march=native -mtune=native"
+  local gen="-fprofile-generate -fprofile-update=atomic -march=$MARCH -mtune=$MTUNE"
   set_cache "$cache" CMAKE_C_FLAGS "$gen"
   set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS "$gen"
   set_cache "$cache" RECOMPCORE_MODULE_OPT_LEVEL 3
@@ -336,6 +365,23 @@ cmd_use() {
   local cache="$build/CMakeCache.txt"
   local n; n=$(gcda_count)
   [ "$n" -gt 40 ] || die "only $n gcda -- run '$0 train' first"
+  local use="-fprofile-use -fprofile-partial-training -fprofile-correction -Wno-error=coverage-mismatch -Wno-missing-profile -march=$MARCH -mtune=$MTUNE"
+  # LTO=0 turns it off; anything else is the LTRANS job count. This matters
+  # for build time, not just speed: a bare -flto serialises LTRANS and spent
+  # ~85 min on the 4.7 MB of object code, while -flto=4 does the same work in
+  # ~13 min and emits a byte-identical-sized module. It is the shipped config,
+  # so build it here rather than leaving it to a manual relink afterwards.
+  local jobs=${LTO:-4}
+  if [ "$jobs" != "0" ]; then
+    use="$use -flto=$jobs"
+    set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS "-flto=$jobs"
+  else
+    set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS " "
+  fi
+  set_cache "$cache" CMAKE_C_FLAGS "$use"
+  set_cache "$cache" RECOMPCORE_MODULE_OPT_LEVEL 3
+  reconfigure_only "$build" use
+
   # Prove the profiles actually resolve at these object paths before spending
   # 40 minutes on a build that would silently ignore them (-Wno-missing-profile
   # is exactly what hid this the first time).
@@ -356,23 +402,7 @@ PY
     CLEAN) echo "pgo: probe chunk used the profile data (no missing-profile warning)" ;;
     *) echo "pgo: PROFILE PROBE FAILED -- refusing to build"; echo "$probe" >&2; exit 1 ;;
   esac
-
-  local use="-fprofile-use -fprofile-partial-training -fprofile-correction -Wno-error=coverage-mismatch -Wno-missing-profile -march=native -mtune=native"
-  # LTO=0 turns it off; anything else is the LTRANS job count. This matters
-  # for build time, not just speed: a bare -flto serialises LTRANS and spent
-  # ~85 min on the 4.7 MB of object code, while -flto=4 does the same work in
-  # ~13 min and emits a byte-identical-sized module. It is the shipped config,
-  # so build it here rather than leaving it to a manual relink afterwards.
-  local jobs=${LTO:-4}
-  if [ "$jobs" != "0" ]; then
-    use="$use -flto=$jobs"
-    set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS "-flto=$jobs"
-  else
-    set_cache "$cache" CMAKE_SHARED_LINKER_FLAGS " "
-  fi
-  set_cache "$cache" CMAKE_C_FLAGS "$use"
-  set_cache "$cache" RECOMPCORE_MODULE_OPT_LEVEL 3
-  reconfigure_and_build "$build" use
+  build_now "$build" use
   write_manifest "$build"
   echo "pgo: use stage done. Measure with: ./tools/speed.sh pgo 40 --load-state $NFACTS"
 }
