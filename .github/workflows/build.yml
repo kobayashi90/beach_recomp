@@ -125,7 +125,10 @@ jobs:
       - name: Configure ModernGekko
         shell: pwsh
         run: |
-          $mingw = Join-Path $env:RUNNER_TEMP "toolchain/mingw"
+          # Forward slashes only: CMake writes the compiler paths into its own
+          # .cmake files, and a Windows path there is read as an escape sequence
+          # ("D:\a\_temp\..." -> "Invalid character escape '\a'").
+          $mingw = (Join-Path $env:RUNNER_TEMP "toolchain/mingw").Replace('\', '/')
           # Static runtimes: a zip whose exes need libstdc++-6.dll and
           # libwinpthread-1.dll is a zip that fails on a clean machine.
           cmake -S lib/ModernGekko -B lib/ModernGekko/build -G Ninja `
@@ -147,7 +150,7 @@ jobs:
       - name: Configure DolRecomp
         shell: pwsh
         run: |
-          $mingw = Join-Path $env:RUNNER_TEMP "toolchain/mingw"
+          $mingw = (Join-Path $env:RUNNER_TEMP "toolchain/mingw").Replace('\', '/')
           cmake -S lib/DolRecomp -B lib/DolRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER="$mingw/bin/clang.exe" -DCMAKE_CXX_COMPILER="$mingw/bin/clang++.exe"
 
