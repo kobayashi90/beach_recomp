@@ -42,7 +42,10 @@ extract() {  # mean/p90/worst Mcycles-per-frame + the ambient line from a run
 }
 
 run_one() {  # run_one <label> <so> <round>
-  local lbl=$1 so=$2 rnd=$3 f="$OUT/${3}-${2##*/}.log"
+  # the label must be in the filename: both A/B modules usually share a
+  # basename (gGBSP8P_recomp.so), so round+basename alone would collide and
+  # the second tee would truncate the first run's log.
+  local lbl=$1 so=$2 rnd=$3 f="$OUT/${3}-${1}-${2##*/}.log"
   "$DIR/tools/loadhog.sh" "$HOGS" &
   local hog=$!
   sleep 1
@@ -64,7 +67,7 @@ echo
 printf '%-16s %-28s %-28s\n' round "$LA" "$LB"
 for r in $(seq 1 "$ROUNDS"); do
   printf '%-16s %-28s %-28s\n' "$r" \
-    "$(extract "$OUT/$r-$(basename "$SA").log")" \
-    "$(extract "$OUT/$r-$(basename "$SB").log")"
+    "$(extract "$OUT/$r-$LA-$(basename "$SA").log")" \
+    "$(extract "$OUT/$r-$LB-$(basename "$SB").log")"
 done
 echo "logs: $OUT"
