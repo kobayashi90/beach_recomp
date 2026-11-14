@@ -893,6 +893,60 @@ Things checked and found not to be the answer:
   nothing more; the unpinned placement already keeps the two hot threads on
   separate cores 99.2 % of the time (`tools/affinity.sh`).
 
+## 2026-11-13: shipped defaults — dual-core on
+
+The other standing complaint ("bad performance on some machines, a single core
+pinned at ~103 %") turned out to be a shipped default, not a bug: desktop
+builds had `DEFAULT_CPU_THREAD = false` (single-CPU mode); only Android got
+`true`. Single-CPU mode is exactly "one core at ~102 % and ~0.59-0.81x speed";
+dual core reaches ~1.00 (table at the top).
+
+| mode | gameplay speed | what the box does |
+|---|---|---|
+| single CPU (old shipped default) | 0.587 | one core saturated at ~102 % |
+| dual core (new shipped default) | 0.81 (~40 fps) | ~1.000 on an idle box |
+
+Why it ships as a compiled default rather than a game ini: the port boots
+`main.dol` directly, so Dolphin's game id becomes `ID-main` and
+`GetGameIniFilenames()` never matches a `GBS*.ini` — no `[Core]` layer of a
+game ini is ever loaded (only the Cheats tab builds those paths by hand in
+`config_menu.cpp`). The change is `DEFAULT_CPU_THREAD` in `MainSettings.cpp`;
+an explicit `CPUThread` in a user's `Dolphin.ini` still overrides it either
+way.
+
+**Module `-O2` vs `-O3` (shipped default): measured 2026-11-14 — no win for
+`-O3`, the default stays `-O2`.** Interleaved A/B with `tools/ab_load.sh`
+(3 rounds x 110 s per module, `tools/loadhog.sh` holding 2 synthetic
+competitors through every run so both sides faced the same stated contention),
+metric = `cpf.sh`'s Mcycles/frame (divided by the guest frame counter, so
+speed wobble cancels out), modules = clang Release thin-LTO, no PGO, built into
+`build/modab/{o2,o3}`:
+
+| module | mean Mcycles/frame per round | p50 | p90 | worst | over 82.0 budget |
+|---|---|---|---|---|---|
+| `-O2` | 126.54 / 121.07 / 118.04 (avg **121.9**) | 146-152 | 183-189 | 194-257 | 82 / 82 / 82 of 110 s |
+| `-O3` | 122.44 / 119.53 / 128.66 (avg **123.5**) | 144-158 | 182-206 | 209-232 | 83 / 82 / 82 of 110 s |
+
+`-O3` won rounds 1-2 by 1-3 % and lost round 3 by 9 %; the aggregate means
+differ by 1.4 % in `-O2`'s favour while round-to-round swing reaches 9 %, and
+`p90`/`worst` both favour `-O2`. That is noise, not a module effect: ambient
+load ran 9.9-11.4 mean (max 15.5, runnable up to 48 on 8 threads) and the
+`-O2` rounds happened to sit on the lighter side of it. Every run was over the
+82 Mcycles budget because the box was contended, not because of the module —
+at load ~1 the same budget clears comfortably (top table). Verdict: no
+evidence `-O3` beats `-O2` *without* PGO, so the shipped default stays `-O2`;
+the tuned path is unaffected because `tools/pgo.sh` forces
+`RECOMPCORE_MODULE_OPT_LEVEL=3` itself (lines 256/382). The earlier ad-hoc
+`speed.sh` pairs that appeared to show a big difference were order/content
+effects — first run IPC ~0.97-1.01, second run ~0.75-0.77 regardless of which
+module ran second — and are not evidence.
+
+Side note (2026-11-14): `tools/perfcount` is a gitignored build artifact and was
+missing on this checkout, so every `PERF=1` run silently produced no counters
+(the harnesses tolerate its absence, which is why it went unnoticed). Rebuild
+with `gcc -O2 -o tools/perfcount tools/perfcount.c` — `perf_event_paranoid=2`
+on this box allows user-space counters.
+
 ## Remaining levers, by expected value
 
 Done: **PGO + `-O3` for the module** was the big one (0.81 → 0.995).
