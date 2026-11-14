@@ -19,8 +19,11 @@ set -u
 ZIP=${1:?usage: tools/win-smoke.sh <BeachSpikers-Windows.zip> [region]}
 REGION=${2:-GBSP8P}
 DIR=/home/lain/opencode/beach_recomp
-WORK=${WORK:-/var/tmp/win-smoke}
-WINEPREFIX=${WINEPREFIX:-/var/tmp/win-smoke-prefix}
+# Wine >= 11 refuses to create its configuration directory under a
+# world-writable directory owned by someone else ("'/var/tmp' is not owned by
+# you"), so the prefix and work dir must live where the user owns the parent.
+WORK=${WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/win-smoke}
+WINEPREFIX=${WINEPREFIX:-${XDG_CACHE_HOME:-$HOME/.cache}/win-smoke-prefix}
 
 case "$REGION" in
   GBSP8P) GAME=${GAME:-$DIR/extracted/beach} ;;
@@ -101,9 +104,13 @@ note "running the packaged runner"
 ( cd "$pkg" && timeout -s KILL 120 wine ./moderngekko-run.exe "${args[@]}" >"$log" 2>&1 )
 status=$?
 
-if grep -qiE "could not be loaded|couldn't be loaded|not a valid Win32|err:module|is not found|FAILED" "$log"; then
+# The pattern needs a word boundary on FAILED: the recomp's own shutdown
+# stats line carries "smc_failed=0" (a counter, and zero!), which a bare
+# case-insensitive FAILED matches -- that turned a healthy boot into a FAIL.
+LOADER_PAT="could not be loaded|couldn't be loaded|not a valid Win32|err:module|is not found|(^|[^_[:alnum:]])FAILED([^_[:alnum:]]|$)"
+if grep -qiE "$LOADER_PAT" "$log"; then
   echo "--- loader complaints ---"
-  grep -iE "could not be loaded|couldn't be loaded|not a valid Win32|err:module|is not found|FAILED" "$log" | head -10
+  grep -iE "$LOADER_PAT" "$log" | head -10
   die "the package could not load its module"
 fi
 if [ "$status" -eq 137 ]; then
